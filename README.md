@@ -22,11 +22,20 @@ A modern, responsive Full-Stack Web Application that allows users to upload sing
    - **Raw Text Inspector Modal**: Click **Inspect** on any row to view the full extracted PDF/OCR text side-by-side with the editable fields.
    - Search across all fields and filter by extraction status (`All`, `Complete`, `Review`, `Error`).
 
-4. **One-Click Export (`.xlsx` & `.json`)**
-   - Export selected rows or all records to a formatted **Excel (`.xlsx`)** spreadsheet (with styled headers, numeric currency formatting, and an automatic summary row) or structured **JSON (`.json`)**.
+4. **Customer & Payment Date Analysis Dashboard**
+   - **Repeating Customer Monitor**: Automatically identifies repeating customers (`2x`, `3x+` payments) vs. one-time customers, tracking total spend, average payment, revenue share (%), first payment date, latest payment date, and full payment date history.
+   - **Payment Date Timeline**: Chronological breakdown of every payment date showing which customers paid on each date and daily total collected.
+   - **Raw Excel (`.xlsx` / `.csv`) Import**: Drag and drop existing Excel sheets directly into the uploader to analyze customer retention and payment dates immediately.
 
-5. **Real-Time KPI Dashboard**
-   - Displays **Total Receipts Processed** (Native vs. OCR breakdown), **Aggregate Total Amount**, **Extraction Success Rate**, and **Quick Export** controls.
+5. **3-Sheet Excel (`.xlsx`) & JSON Export**
+   - Export selected rows or all records to a formatted **3-Sheet Excel (`.xlsx`)** workbook:
+     1. `Extracted Receipts` (Raw extracted records + summary total)
+     2. `Customer Repeat Analysis` (Customer loyalty status, payment counts, all dates paid, revenue share)
+     3. `Payment Date Monitor` (Daily payment totals & list of customers who paid on each date)
+   - Export structured **JSON (`.json`)** containing both raw records and aggregated customer/date analytics.
+
+6. **Real-Time KPI Dashboard**
+   - Displays **Total Receipts Processed** (Unique & Repeat Customers count), **Aggregate Total Amount** (with Repeat Revenue breakdown), **Extraction Success Rate**, and **Quick Export** controls.
 
 ---
 
