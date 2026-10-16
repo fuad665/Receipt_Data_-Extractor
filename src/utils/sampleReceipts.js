@@ -1,68 +1,66 @@
 import { jsPDF } from 'jspdf';
 
 /**
- * Generates an array of real PDF File objects with diverse receipt/invoice layouts
- * (including native text PDFs and a scanned image-based PDF for OCR testing).
+ * Generates an array of real PDF File objects with diverse receipt/invoice layouts,
+ * including repeat customers across multiple payment dates to showcase the
+ * Customer Loyalty & Payment Date Analysis dashboard.
  */
 export function generateSamplePdfFiles(includeScannedOcr = false) {
   const files = [];
 
-  // 1. AWS Cloud B2B Invoice (MMM DD, YYYY format + "Amount Due")
+  if (includeScannedOcr) {
+    const scannedDoc = createScannedImagePdf();
+    files.push(pdfToFile(scannedDoc, 'Scanned_Starbucks_Receipt_OCR.pdf'));
+    return files;
+  }
+
+  // 1. Apex Digital Solutions — Payment #1 (Sep 12, 2026)
   const doc1 = new jsPDF();
   doc1.setFont('helvetica', 'bold');
   doc1.setFontSize(18);
   doc1.text('TAX INVOICE', 20, 22);
   doc1.setFontSize(12);
-  doc1.text('Vendor: Amazon Web Services, Inc.', 20, 34);
+  doc1.text('Customer Name: Apex Digital Solutions LLC', 20, 34);
   doc1.setFont('helvetica', 'normal');
   doc1.setFontSize(10);
-  doc1.text('410 Terry Ave North, Seattle, WA 98109', 20, 41);
-  doc1.text('Invoice Number: INV-2026-98412', 20, 52);
-  doc1.text('Invoice Date: October 12, 2026', 20, 59);
-  doc1.text('Billed To: Apex Digital Solutions LLC', 20, 70);
-  doc1.line(20, 77, 190, 77);
-  doc1.text('Description                                                           Amount', 20, 85);
-  doc1.line(20, 89, 190, 89);
-  doc1.text('Amazon EC2 Compute Instances (us-east-1)                             $980.00', 20, 98);
-  doc1.text('Amazon RDS PostgreSQL Production Cluster                             $340.50', 20, 106);
-  doc1.text('AWS CloudFront Data Transfer & S3 Storage                            $108.00', 20, 114);
-  doc1.line(20, 122, 190, 122);
-  doc1.text('Subtotal: $1,428.50', 135, 132);
-  doc1.text('Tax (0%): $0.00', 135, 139);
+  doc1.text('Vendor: Apex Digital Solutions LLC', 20, 41);
+  doc1.text('Invoice Number: INV-2026-98104', 20, 52);
+  doc1.text('Invoice Date: September 12, 2026', 20, 59);
+  doc1.line(20, 67, 190, 67);
+  doc1.text('Cloud Hosting & Managed Infrastructure Retainer (Sep)               $1,250.00', 20, 78);
+  doc1.text('24/7 Priority SLA Support Add-on                                      $178.50', 20, 86);
+  doc1.line(20, 95, 190, 95);
   doc1.setFont('helvetica', 'bold');
   doc1.setFontSize(12);
-  doc1.text('Amount Due: $1,428.50', 125, 150);
-  files.push(pdfToFile(doc1, 'AWS_Cloud_Invoice_Oct2026.pdf'));
+  doc1.text('Amount Due: $1,428.50', 125, 108);
+  files.push(pdfToFile(doc1, 'Apex_Digital_Invoice_Sep2026.pdf'));
 
-  // 2. Whole Foods Market Retail Receipt (YYYY-MM-DD format + "Grand Total")
+  // 2. Apex Digital Solutions — Payment #2 (Oct 12, 2026 - Repeat Customer!)
   const doc2 = new jsPDF();
-  doc2.setFont('courier', 'bold');
-  doc2.setFontSize(16);
-  doc2.text('WHOLE FOODS MARKET', 20, 25);
-  doc2.setFont('courier', 'normal');
-  doc2.setFontSize(10);
-  doc2.text('270 Greenwich St, New York, NY 10007', 20, 33);
-  doc2.text('Receipt #: WFM-449102', 20, 43);
-  doc2.text('Date: 2026-10-14   Time: 14:22', 20, 50);
-  doc2.text('------------------------------------------------', 20, 58);
-  doc2.text('Organic Honeycrisp Apples                $12.99', 20, 66);
-  doc2.text('Wild Alaskan Salmon Fillet               $28.50', 20, 73);
-  doc2.text('Artisan Sourdough Bread                   $7.49', 20, 80);
-  doc2.text('Cold Pressed Olive Oil 750ml             $24.99', 20, 87);
-  doc2.text('Organic Almond Milk (2x)                  $8.98', 20, 94);
-  doc2.text('------------------------------------------------', 20, 102);
-  doc2.text('Subtotal                                 $82.95', 20, 110);
-  doc2.text('Sales Tax                                 $3.50', 20, 117);
-  doc2.setFont('courier', 'bold');
+  doc2.setFont('helvetica', 'bold');
+  doc2.setFontSize(18);
+  doc2.text('TAX INVOICE', 20, 22);
   doc2.setFontSize(12);
-  doc2.text('Grand Total:                             $86.45', 20, 128);
-  files.push(pdfToFile(doc2, 'Whole_Foods_Receipt.pdf'));
+  doc2.text('Customer Name: Apex Digital Solutions LLC', 20, 34);
+  doc2.setFont('helvetica', 'normal');
+  doc2.setFontSize(10);
+  doc2.text('Vendor: Apex Digital Solutions LLC', 20, 41);
+  doc2.text('Invoice Number: INV-2026-98412', 20, 52);
+  doc2.text('Invoice Date: October 12, 2026', 20, 59);
+  doc2.line(20, 67, 190, 67);
+  doc2.text('Cloud Hosting & Managed Infrastructure Retainer (Oct)               $1,250.00', 20, 78);
+  doc2.text('Database Performance Optimization Package                             $400.00', 20, 86);
+  doc2.line(20, 95, 190, 95);
+  doc2.setFont('helvetica', 'bold');
+  doc2.setFontSize(12);
+  doc2.text('Amount Due: $1,650.00', 125, 108);
+  files.push(pdfToFile(doc2, 'Apex_Digital_Invoice_Oct2026.pdf'));
 
-  // 3. Figma Enterprise SaaS Invoice (DD MMM YYYY format + "Net Total")
+  // 3. Nordstrom Creative Studio — Payment #1 (Oct 09, 2026)
   const doc3 = new jsPDF();
   doc3.setFont('helvetica', 'bold');
   doc3.setFontSize(16);
-  doc3.text('Figma, Inc.', 20, 24);
+  doc3.text('Nordstrom Creative Studio', 20, 24);
   doc3.setFont('helvetica', 'normal');
   doc3.setFontSize(10);
   doc3.text('760 Market Street, Floor 10, San Francisco, CA 94102', 20, 31);
@@ -70,41 +68,62 @@ export function generateSamplePdfFiles(includeScannedOcr = false) {
   doc3.text('Date of Issue: 09 Oct 2026', 20, 50);
   doc3.text('Billed To: Nordstrom Creative Studio', 20, 57);
   doc3.line(20, 65, 190, 65);
-  doc3.text('Figma Organization Plan - 12 Full Design Seats                       $540.00', 20, 75);
-  doc3.text('FigJam Enterprise Collaboration Add-on                               $120.00', 20, 83);
-  doc3.text('Subtotal: $660.00', 140, 96);
-  doc3.text('Sales Tax (9.09%): $60.00', 140, 103);
+  doc3.text('Enterprise Design System Subscription (12 Seats)                      $720.00', 20, 75);
   doc3.setFont('helvetica', 'bold');
   doc3.setFontSize(12);
-  doc3.text('Net Total: $720.00', 135, 114);
-  files.push(pdfToFile(doc3, 'Figma_Enterprise_Invoice.pdf'));
+  doc3.text('Net Total: $720.00', 135, 92);
+  files.push(pdfToFile(doc3, 'Nordstrom_Studio_Oct09.pdf'));
 
-  // 4. Apple Store Receipt (MM/DD/YYYY format + "Total Paid")
+  // 4. Nordstrom Creative Studio — Payment #2 (Oct 15, 2026 - Repeat Customer!)
   const doc4 = new jsPDF();
   doc4.setFont('helvetica', 'bold');
   doc4.setFontSize(16);
-  doc4.text('Apple Store Fifth Avenue', 20, 24);
+  doc4.text('Nordstrom Creative Studio', 20, 24);
   doc4.setFont('helvetica', 'normal');
   doc4.setFontSize(10);
-  doc4.text('767 5th Ave, New York, NY 10153', 20, 31);
-  doc4.text('Order Number: APL-902184', 20, 42);
-  doc4.text('Transaction Date: 10/15/2026', 20, 49);
-  doc4.text('Customer Name: Fuad Hiybo', 20, 56);
-  doc4.line(20, 63, 190, 63);
-  doc4.text('MacBook Pro 14-inch (M3 Pro, 18GB, 512GB SSD)                      $1,999.00', 20, 73);
-  doc4.text('AppleCare+ for 14-inch MacBook Pro                                   $279.00', 20, 81);
-  doc4.text('Subtotal: $2,278.00', 135, 95);
-  doc4.text('Estimated Tax: $202.17', 135, 102);
+  doc4.text('Receipt Number: REC-889401', 20, 38);
+  doc4.text('Date of Issue: 15 Oct 2026', 20, 46);
+  doc4.text('Billed To: Nordstrom Creative Studio', 20, 54);
+  doc4.line(20, 62, 190, 62);
+  doc4.text('Brand Identity & UI Prototyping Workshop                              $950.00', 20, 74);
   doc4.setFont('helvetica', 'bold');
   doc4.setFontSize(12);
-  doc4.text('Total Paid: $2,480.17', 130, 113);
-  files.push(pdfToFile(doc4, 'Apple_Store_Receipt.pdf'));
+  doc4.text('Net Total: $950.00', 135, 90);
+  files.push(pdfToFile(doc4, 'Nordstrom_Studio_Oct15.pdf'));
 
-  // 5. Optional Scanned Image-Only PDF (to demonstrate OCR Fallback)
-  if (includeScannedOcr) {
-    const scannedDoc = createScannedImagePdf();
-    files.push(pdfToFile(scannedDoc, 'Scanned_Starbucks_Receipt_OCR.pdf'));
-  }
+  // 5. Whole Foods Market Corporate Catering (Oct 12, 2026 - Same date as Apex #2!)
+  const doc5 = new jsPDF();
+  doc5.setFont('courier', 'bold');
+  doc5.setFontSize(16);
+  doc5.text('Whole Foods Market', 20, 25);
+  doc5.setFont('courier', 'normal');
+  doc5.setFontSize(10);
+  doc5.text('Receipt #: WFM-449102', 20, 38);
+  doc5.text('Date: 2026-10-12   Time: 14:22', 20, 46);
+  doc5.text('------------------------------------------------', 20, 54);
+  doc5.text('Executive Team Catering Platter          $240.00', 20, 64);
+  doc5.text('Organic Cold Brew & Refreshments          $86.45', 20, 72);
+  doc5.setFont('courier', 'bold');
+  doc5.setFontSize(12);
+  doc5.text('Grand Total:                            $326.45', 20, 86);
+  files.push(pdfToFile(doc5, 'Whole_Foods_Receipt_Oct12.pdf'));
+
+  // 6. Horizon Global Logistics (Oct 15, 2026 - One-Time Customer)
+  const doc6 = new jsPDF();
+  doc6.setFont('helvetica', 'bold');
+  doc6.setFontSize(16);
+  doc6.text('Horizon Global Logistics', 20, 24);
+  doc6.setFont('helvetica', 'normal');
+  doc6.setFontSize(10);
+  doc6.text('Order Number: HGL-902184', 20, 38);
+  doc6.text('Transaction Date: 10/15/2026', 20, 46);
+  doc6.text('Customer Name: Horizon Global Logistics', 20, 54);
+  doc6.line(20, 62, 190, 62);
+  doc6.text('Annual Fleet Tracking & API Integration License                     $2,480.00', 20, 74);
+  doc6.setFont('helvetica', 'bold');
+  doc6.setFontSize(12);
+  doc6.text('Total Paid: $2,480.00', 130, 90);
+  files.push(pdfToFile(doc6, 'Horizon_Logistics_Oct15.pdf'));
 
   return files;
 }
@@ -115,7 +134,6 @@ function createScannedImagePdf() {
   canvas.height = 600;
   const ctx = canvas.getContext('2d');
 
-  // High-contrast paper background
   ctx.fillStyle = '#FFFFFF';
   ctx.fillRect(0, 0, canvas.width, canvas.height);
 

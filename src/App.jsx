@@ -24,9 +24,20 @@ import {
   X,
   Receipt,
   ShieldCheck,
+  BarChart3,
+  Users,
+  Repeat,
+  TrendingUp,
+  Clock,
+  ArrowUpRight,
 } from 'lucide-react';
 import { processPdfFiles, checkBackendHealth } from './utils/pdfExtractor';
-import { exportToExcel, exportToJson } from './utils/exportUtils';
+import {
+  exportToExcel,
+  exportToJson,
+  buildAnalyticsData,
+  importExcelFile,
+} from './utils/exportUtils';
 import { generateSamplePdfFiles } from './utils/sampleReceipts';
 
 const STORAGE_KEY = 'receipt_data_extractor_records_v1';
@@ -55,6 +66,8 @@ export default function App() {
     }
   });
 
+  const [activeTab, setActiveTab] = useState('table'); // 'table' | 'analysis'
+  const [customerFilter, setCustomerFilter] = useState('all'); // 'all' | 'repeat' | 'onetime'
   const [selectedIds, setSelectedIds] = useState(new Set());
   const [searchQuery, setSearchQuery] = useState('');
   const [statusFilter, setStatusFilter] = useState('all');
@@ -64,7 +77,7 @@ export default function App() {
   const [notification, setNotification] = useState(null);
   const [inspectRecord, setInspectRecord] = useState(null);
   const [backendConnected, setBackendConnected] = useState(false);
-  const [editingCell, setEditingCell] = useState(null); // { id, field }
+  const [editingCell, setEditingCell] = useState(null);
 
   const fileInputRef = useRef(null);
 
@@ -87,7 +100,7 @@ export default function App() {
     }, 4500);
   };
 
-  // Handle PDF File Uploads
+  // Handle PDF and Excel (.xlsx / .csv) File Uploads
   const handleFilesUpload = async (fileList) => {
     const filesArray = Array.from(fileList || []);
     if (filesArray.length === 0) return;
@@ -96,25 +109,53 @@ export default function App() {
     setProgress({ stage: `Preparing ${filesArray.length} file(s)...`, percent: 10 });
 
     try {
-      const { results } = await processPdfFiles(filesArray, (prog) => {
-        setProgress(prog);
-      });
+      const pdfFiles = [];
+      const excelFiles = [];
 
-      setRecords((prev) => [...results, ...prev]);
+      for (const f of filesArray) {
+        const lower = (f.name || '').toLowerCase();
+        if (lower.endsWith('.xlsx') || lower.endsWith('.xls') || lower.endsWith('.csv')) {
+          excelFiles.push(f);
+        } else {
+          pdfFiles.push(f);
+        }
+      }
 
-      const successCount = results.filter((r) => r.status === 'success').length;
-      const partialCount = results.filter((r) => r.status === 'partial').length;
-      const errorCount = results.filter((r) => r.status === 'error').length;
+      let newRecords = [];
+
+      if (excelFiles.length > 0) {
+        setProgress({ stage: `Importing raw data from ${excelFiles.length} Excel file(s)...`, percent: 35 });
+        for (const ef of excelFiles) {
+          const imported = await importExcelFile(ef);
+          newRecords.push(...imported);
+        }
+      }
+
+      if (pdfFiles.length > 0) {
+        const { results } = await processPdfFiles(pdfFiles, (prog) => {
+          setProgress(prog);
+        });
+        newRecords.push(...results);
+      }
+
+      setRecords((prev) => [...newRecords, ...prev]);
+
+      const successCount = newRecords.filter((r) => r.status === 'success').length;
+      const partialCount = newRecords.filter((r) => r.status === 'partial').length;
+      const errorCount = newRecords.filter((r) => r.status === 'error').length;
 
       if (errorCount > 0 && successCount === 0 && partialCount === 0) {
         showToast('error', `Failed to extract data from ${errorCount} file(s). Check file format.`);
       } else if (partialCount > 0 || errorCount > 0) {
         showToast(
           'warning',
-          `Processed ${results.length} PDF(s): ${successCount} complete, ${partialCount + errorCount} flagged for quick review.`
+          `Processed ${newRecords.length} record(s): ${successCount} complete, ${partialCount + errorCount} flagged for review.`
         );
       } else {
-        showToast('success', `Successfully extracted data from ${results.length} PDF receipt(s)!`);
+        showToast(
+          'success',
+          `Successfully extracted ${newRecords.length} receipt record(s)! Open the "Customer & Date Analysis" tab to view insights.`
+        );
       }
     } catch (err) {
       showToast('error', `Extraction failed: ${err?.message || 'Unexpected error'}`);
@@ -125,21 +166,20 @@ export default function App() {
     }
   };
 
-  // Load Sample PDFs (Native or Scanned OCR)
+  // Load Sample PDFs (Native with Repeat Customers or Scanned OCR)
   const handleLoadSamples = async (includeOcr = false) => {
     if (isProcessing) return;
     setIsProcessing(true);
     setProgress({
       stage: includeOcr
         ? 'Generating Scanned Image PDF & running OCR fallback...'
-        : 'Generating 4 diverse sample PDF invoices & receipts...',
+        : 'Generating 6 sample PDF receipts (including repeat customers across multiple dates)...',
       percent: 15,
     });
 
     try {
       const sampleFiles = generateSamplePdfFiles(includeOcr);
-      const filesToRun = includeOcr ? [sampleFiles[sampleFiles.length - 1]] : sampleFiles;
-      await handleFilesUpload(filesToRun);
+      await handleFilesUpload(sampleFiles);
     } catch (err) {
       setIsProcessing(false);
       showToast('error', `Could not load sample PDFs: ${err.message}`);
@@ -164,7 +204,10 @@ export default function App() {
           updated.merchant_name !== 'Corrupted PDF File' &&
           updated.merchant_name !== 'Invalid File Type';
         const hasDate = Boolean(updated.date?.trim());
-        const hasAmount = updated.total_amount !== null && updated.total_amount !== '' && !Number.isNaN(Number(updated.total_amount));
+        const hasAmount =
+          updated.total_amount !== null &&
+          updated.total_amount !== '' &&
+          !Number.isNaN(Number(updated.total_amount));
 
         const validCount = [hasMerchant, hasDate, hasAmount].filter(Boolean).length;
         updated.confidence = Math.round((validCount / 3) * 100);
@@ -187,7 +230,7 @@ export default function App() {
     const newRecord = {
       id: newId,
       filename: 'Manual_Entry.pdf',
-      merchant_name: 'New Merchant / Vendor',
+      merchant_name: 'New Customer / Merchant',
       customer_name: '',
       invoice_number: `INV-${Math.floor(1000 + Math.random() * 9000)}`,
       date: today,
@@ -201,6 +244,7 @@ export default function App() {
       error_message: '',
     };
     setRecords((prev) => [newRecord, ...prev]);
+    setActiveTab('table');
     setEditingCell({ id: newId, field: 'merchant_name' });
     showToast('success', 'Added a new editable row. Click any field to customize.');
   };
@@ -230,7 +274,7 @@ export default function App() {
     showToast('success', 'Cleared all receipt records.');
   };
 
-  // Filtered records
+  // Filtered records for the table
   const filteredRecords = useMemo(() => {
     return records.filter((rec) => {
       const matchesStatus = statusFilter === 'all' || rec.status === statusFilter;
@@ -259,8 +303,11 @@ export default function App() {
     const successCount = records.filter((r) => r.status === 'success').length;
     const partialCount = records.filter((r) => r.status === 'partial').length;
     const errorCount = records.filter((r) => r.status === 'error').length;
-    const ocrCount = records.filter((r) => (r.extraction_method || '').toLowerCase().includes('ocr')).length;
-    const successRate = totalReceipts > 0 ? Math.round((successCount / totalReceipts) * 100) : 100;
+    const ocrCount = records.filter((r) =>
+      (r.extraction_method || '').toLowerCase().includes('ocr')
+    ).length;
+    const successRate =
+      totalReceipts > 0 ? Math.round((successCount / totalReceipts) * 100) : 100;
 
     return {
       totalReceipts,
@@ -273,7 +320,16 @@ export default function App() {
     };
   }, [records]);
 
-  // Records targeted for export (selected rows if any, otherwise all filtered rows)
+  // Customer & Payment Date Analytics
+  const analytics = useMemo(() => buildAnalyticsData(records), [records]);
+
+  const filteredCustomers = useMemo(() => {
+    if (customerFilter === 'repeat') return analytics.customers.filter((c) => c.isRepeat);
+    if (customerFilter === 'onetime') return analytics.customers.filter((c) => !c.isRepeat);
+    return analytics.customers;
+  }, [analytics.customers, customerFilter]);
+
+  // Records targeted for export
   const recordsToExport = useMemo(() => {
     if (selectedIds.size > 0) {
       return records.filter((r) => selectedIds.has(r.id));
@@ -310,7 +366,10 @@ export default function App() {
       return;
     }
     await exportToExcel(recordsToExport);
-    showToast('success', `Exported ${recordsToExport.length} record(s) to Excel (.xlsx)!`);
+    showToast(
+      'success',
+      `Exported ${recordsToExport.length} record(s) to Excel (.xlsx) with Customer Repeat & Date Analysis sheets!`
+    );
   };
 
   const handleExportJson = async () => {
@@ -319,7 +378,20 @@ export default function App() {
       return;
     }
     await exportToJson(recordsToExport);
-    showToast('success', `Exported ${recordsToExport.length} record(s) to JSON (.json)!`);
+    showToast('success', `Exported ${recordsToExport.length} record(s) & analytics to JSON!`);
+  };
+
+  const jumpToCustomerReceipts = (customerName) => {
+    setSearchQuery(customerName);
+    setStatusFilter('all');
+    setActiveTab('table');
+  };
+
+  const jumpToDateReceipts = (dateStr) => {
+    if (dateStr === 'Unscheduled / No Date') return;
+    setSearchQuery(dateStr);
+    setStatusFilter('all');
+    setActiveTab('table');
   };
 
   return (
@@ -338,11 +410,11 @@ export default function App() {
                 </h1>
                 <span className="hidden sm:inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs font-medium bg-indigo-50 text-indigo-700 border border-indigo-200">
                   <ShieldCheck className="w-3.5 h-3.5" />
-                  PDF + OCR Engine
+                  PDF + OCR + Analytics
                 </span>
               </div>
               <p className="text-xs text-slate-500 hidden sm:block">
-                Automated Merchant, Date &amp; Total extraction with inline review &amp; Excel/JSON export
+                Extract receipts, monitor customer payment dates &amp; repeat customers, and export to Excel/JSON
               </p>
             </div>
           </div>
@@ -354,7 +426,7 @@ export default function App() {
               onClick={() => handleLoadSamples(false)}
               disabled={isProcessing}
               className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs sm:text-sm font-medium rounded-lg bg-indigo-50 text-indigo-700 hover:bg-indigo-100 border border-indigo-200 transition disabled:opacity-50 cursor-pointer"
-              title="Generate and extract 4 realistic PDF invoices & receipts"
+              title="Generate and extract 6 sample PDF receipts including repeat customers"
             >
               <Sparkles className="w-4 h-4 text-indigo-600" />
               <span>Load Sample PDFs</span>
@@ -429,9 +501,11 @@ export default function App() {
               </p>
               <p className="text-2xl font-bold text-slate-900 mt-1">{stats.totalReceipts}</p>
               <p className="text-xs text-slate-500 mt-1 flex items-center gap-2">
-                <span>{stats.totalReceipts - stats.ocrCount} Native PDF</span>
+                <span>{analytics.totalCustomers} Unique Customers</span>
                 <span>•</span>
-                <span className="text-indigo-600 font-medium">{stats.ocrCount} OCR Scanned</span>
+                <span className="text-indigo-600 font-medium">
+                  {analytics.repeatCustomersCount} Repeat
+                </span>
               </p>
             </div>
             <div className="w-10 h-10 rounded-lg bg-indigo-50 text-indigo-600 flex items-center justify-center shrink-0">
@@ -446,10 +520,21 @@ export default function App() {
                 Aggregate Amount
               </p>
               <p className="text-2xl font-bold text-slate-900 mt-1">
-                ${stats.aggregateAmount.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                $
+                {stats.aggregateAmount.toLocaleString('en-US', {
+                  minimumFractionDigits: 2,
+                  maximumFractionDigits: 2,
+                })}
               </p>
               <p className="text-xs text-slate-500 mt-1">
-                Calculated across {stats.totalReceipts} receipt{stats.totalReceipts === 1 ? '' : 's'}
+                Repeat revenue:{' '}
+                <strong className="text-emerald-600">
+                  $
+                  {analytics.repeatRevenue.toLocaleString('en-US', {
+                    minimumFractionDigits: 2,
+                    maximumFractionDigits: 2,
+                  })}
+                </strong>
               </p>
             </div>
             <div className="w-10 h-10 rounded-lg bg-emerald-50 text-emerald-600 flex items-center justify-center shrink-0">
@@ -488,7 +573,7 @@ export default function App() {
           <div className="bg-white rounded-xl border border-slate-200 p-4 shadow-xs flex flex-col justify-between">
             <div className="flex items-center justify-between">
               <p className="text-xs font-medium uppercase tracking-wider text-slate-500">
-                Quick Export ({selectedIds.size > 0 ? `${selectedIds.size} Selected` : 'All'})
+                Export + Analysis ({selectedIds.size > 0 ? `${selectedIds.size} Selected` : 'All'})
               </p>
               <Download className="w-4 h-4 text-slate-400" />
             </div>
@@ -498,6 +583,7 @@ export default function App() {
                 onClick={handleExportExcel}
                 disabled={recordsToExport.length === 0}
                 className="inline-flex items-center justify-center gap-1.5 px-3 py-2 rounded-lg text-xs font-semibold bg-emerald-600 text-white hover:bg-emerald-700 transition disabled:opacity-40 cursor-pointer shadow-xs"
+                title="Exports 3 sheets: Extracted Receipts, Customer Repeat Analysis, and Payment Date Monitor"
               >
                 <FileSpreadsheet className="w-4 h-4" />
                 <span>Excel (.xlsx)</span>
@@ -515,8 +601,8 @@ export default function App() {
           </div>
         </section>
 
-        {/* Drag and Drop PDF Upload Zone */}
-        <section aria-label="PDF Upload Area">
+        {/* Drag and Drop PDF & Excel Upload Zone */}
+        <section aria-label="PDF and Excel Upload Area">
           <div
             onDragOver={(e) => {
               e.preventDefault();
@@ -537,7 +623,7 @@ export default function App() {
               }
             }}
             onClick={() => !isProcessing && fileInputRef.current?.click()}
-            className={`relative rounded-2xl border-2 border-dashed p-6 sm:p-8 text-center transition-all cursor-pointer ${
+            className={`relative rounded-2xl border-2 border-dashed p-5 sm:p-7 text-center transition-all cursor-pointer ${
               isDragging
                 ? 'border-indigo-600 bg-indigo-50/70 scale-[1.005]'
                 : 'border-slate-300 bg-white hover:border-indigo-400 hover:bg-slate-50/60'
@@ -546,7 +632,7 @@ export default function App() {
             <input
               ref={fileInputRef}
               type="file"
-              accept=".pdf,application/pdf"
+              accept=".pdf,.xlsx,.xls,.csv,application/pdf,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
               multiple
               onChange={(e) => handleFilesUpload(e.target.files)}
               className="hidden"
@@ -560,7 +646,7 @@ export default function App() {
                 <div className="space-y-1">
                   <p className="text-sm font-semibold text-slate-900">{progress.stage}</p>
                   <p className="text-xs text-slate-500">
-                    Running layout heuristics &amp; automatic OCR fallback if needed...
+                    Running layout heuristics, OCR fallback &amp; customer payment analysis...
                   </p>
                 </div>
                 <div className="w-full h-2 bg-slate-100 rounded-full overflow-hidden">
@@ -578,20 +664,20 @@ export default function App() {
                   </div>
                   <div>
                     <p className="text-base font-semibold text-slate-900">
-                      Drag &amp; drop PDF receipts or invoices here, or{' '}
+                      Drag &amp; drop PDF receipts or Excel (`.xlsx`) files here, or{' '}
                       <span className="text-indigo-600 underline decoration-indigo-300 underline-offset-2">
                         browse files
                       </span>
                     </p>
                     <p className="text-xs sm:text-sm text-slate-500 mt-0.5">
-                      Supports single or batch PDF uploads • Native text extraction + automatic OCR fallback for scanned receipts
+                      Upload single/multiple PDFs (Native + OCR) or raw Excel data to analyze repeating customers &amp; payment dates
                     </p>
                   </div>
                 </div>
 
                 <div className="flex items-center gap-2 shrink-0">
                   <span className="px-3.5 py-2 rounded-xl bg-indigo-600 text-white text-xs sm:text-sm font-semibold shadow-xs hover:bg-indigo-700 transition">
-                    Select PDF Files
+                    Upload PDF / Excel
                   </span>
                 </div>
               </div>
@@ -599,466 +685,915 @@ export default function App() {
           </div>
         </section>
 
-        {/* Interactive Data Table & Review Section */}
-        <section className="bg-white rounded-2xl border border-slate-200 shadow-xs overflow-hidden">
-          {/* Table Toolbar */}
-          <div className="p-4 sm:px-6 border-b border-slate-200 flex flex-col lg:flex-row lg:items-center lg:justify-between gap-3">
-            <div className="flex flex-col sm:flex-row sm:items-center gap-3 flex-1">
-              {/* Search Box */}
-              <div className="relative flex-1 max-w-md">
-                <Search className="w-4 h-4 text-slate-400 absolute left-3.5 top-1/2 -translate-y-1/2" />
-                <input
-                  type="text"
-                  value={searchQuery}
-                  onChange={(e) => setSearchQuery(e.target.value)}
-                  placeholder="Search merchant, customer, date, amount, or file..."
-                  className="w-full pl-9 pr-8 py-2 text-sm rounded-xl border border-slate-200 focus:outline-none focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-500"
-                />
-                {searchQuery && (
-                  <button
-                    onClick={() => setSearchQuery('')}
-                    className="absolute right-2.5 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-600"
-                  >
-                    <X className="w-4 h-4" />
-                  </button>
-                )}
-              </div>
+        {/* Workspace View Switcher: Extracted Data Table vs. Customer & Date Analysis */}
+        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 border-b border-slate-200 pb-3">
+          <div className="inline-flex items-center gap-1.5 bg-slate-200/70 p-1 rounded-xl self-start">
+            <button
+              type="button"
+              onClick={() => setActiveTab('table')}
+              className={`inline-flex items-center gap-2 px-4 py-2 rounded-lg text-xs sm:text-sm font-semibold transition cursor-pointer ${
+                activeTab === 'table'
+                  ? 'bg-white text-slate-900 shadow-xs'
+                  : 'text-slate-600 hover:text-slate-900'
+              }`}
+            >
+              <Receipt className="w-4 h-4 text-indigo-600" />
+              <span>Extracted Receipts Table</span>
+              <span className="px-2 py-0.5 rounded-full text-xs bg-slate-100 text-slate-700">
+                {records.length}
+              </span>
+            </button>
 
-              {/* Status Filter Pills */}
-              <div className="flex items-center gap-1 bg-slate-100 p-1 rounded-xl self-start">
-                {[
-                  { key: 'all', label: `All (${records.length})` },
-                  { key: 'success', label: `Complete (${stats.successCount})` },
-                  { key: 'partial', label: `Review (${stats.partialCount})` },
-                  { key: 'error', label: `Error (${stats.errorCount})` },
-                ].map((tab) => (
-                  <button
-                    key={tab.key}
-                    type="button"
-                    onClick={() => setStatusFilter(tab.key)}
-                    className={`px-2.5 py-1 rounded-lg text-xs font-medium transition cursor-pointer ${
-                      statusFilter === tab.key
-                        ? 'bg-white text-slate-900 shadow-xs'
-                        : 'text-slate-600 hover:text-slate-900'
-                    }`}
-                  >
-                    {tab.label}
-                  </button>
-                ))}
-              </div>
-            </div>
-
-            {/* Right Table Actions */}
-            <div className="flex items-center gap-2 flex-wrap">
-              {selectedIds.size > 0 && (
-                <button
-                  type="button"
-                  onClick={handleDeleteSelected}
-                  className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-xs font-medium bg-rose-50 text-rose-700 hover:bg-rose-100 border border-rose-200 transition cursor-pointer"
-                >
-                  <Trash2 className="w-3.5 h-3.5" />
-                  <span>Delete Selected ({selectedIds.size})</span>
-                </button>
+            <button
+              type="button"
+              onClick={() => setActiveTab('analysis')}
+              className={`inline-flex items-center gap-2 px-4 py-2 rounded-lg text-xs sm:text-sm font-semibold transition cursor-pointer ${
+                activeTab === 'analysis'
+                  ? 'bg-white text-slate-900 shadow-xs'
+                  : 'text-slate-600 hover:text-slate-900'
+              }`}
+            >
+              <BarChart3 className="w-4 h-4 text-emerald-600" />
+              <span>Customer &amp; Payment Date Analysis</span>
+              {analytics.repeatCustomersCount > 0 && (
+                <span className="px-2 py-0.5 rounded-full text-xs font-bold bg-emerald-100 text-emerald-800">
+                  {analytics.repeatCustomersCount} Repeat
+                </span>
               )}
-
-              <button
-                type="button"
-                onClick={handleAddManualRow}
-                className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-xs font-medium bg-slate-100 text-slate-700 hover:bg-slate-200 transition cursor-pointer"
-              >
-                <Plus className="w-3.5 h-3.5" />
-                <span>Add Manual Row</span>
-              </button>
-            </div>
+            </button>
           </div>
 
-          {/* Empty State */}
-          {records.length === 0 ? (
-            <div className="p-12 text-center max-w-lg mx-auto space-y-4">
-              <div className="w-14 h-14 rounded-2xl bg-slate-100 text-slate-500 flex items-center justify-center mx-auto">
-                <Receipt className="w-7 h-7" />
+          <p className="text-xs text-slate-500">
+            Excel export automatically includes <strong>Customer Repeat Analysis</strong> &amp;{' '}
+            <strong>Payment Date Monitor</strong> worksheets.
+          </p>
+        </div>
+
+        {/* TAB 1: EXTRACTED RECEIPTS TABLE */}
+        {activeTab === 'table' && (
+          <section className="bg-white rounded-2xl border border-slate-200 shadow-xs overflow-hidden">
+            {/* Table Toolbar */}
+            <div className="p-4 sm:px-6 border-b border-slate-200 flex flex-col lg:flex-row lg:items-center lg:justify-between gap-3">
+              <div className="flex flex-col sm:flex-row sm:items-center gap-3 flex-1">
+                {/* Search Box */}
+                <div className="relative flex-1 max-w-md">
+                  <Search className="w-4 h-4 text-slate-400 absolute left-3.5 top-1/2 -translate-y-1/2" />
+                  <input
+                    type="text"
+                    value={searchQuery}
+                    onChange={(e) => setSearchQuery(e.target.value)}
+                    placeholder="Search customer, merchant, date, amount, or file..."
+                    className="w-full pl-9 pr-8 py-2 text-sm rounded-xl border border-slate-200 focus:outline-none focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-500"
+                  />
+                  {searchQuery && (
+                    <button
+                      onClick={() => setSearchQuery('')}
+                      className="absolute right-2.5 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-600"
+                    >
+                      <X className="w-4 h-4" />
+                    </button>
+                  )}
+                </div>
+
+                {/* Status Filter Pills */}
+                <div className="flex items-center gap-1 bg-slate-100 p-1 rounded-xl self-start">
+                  {[
+                    { key: 'all', label: `All (${records.length})` },
+                    { key: 'success', label: `Complete (${stats.successCount})` },
+                    { key: 'partial', label: `Review (${stats.partialCount})` },
+                    { key: 'error', label: `Error (${stats.errorCount})` },
+                  ].map((tab) => (
+                    <button
+                      key={tab.key}
+                      type="button"
+                      onClick={() => setStatusFilter(tab.key)}
+                      className={`px-2.5 py-1 rounded-lg text-xs font-medium transition cursor-pointer ${
+                        statusFilter === tab.key
+                          ? 'bg-white text-slate-900 shadow-xs'
+                          : 'text-slate-600 hover:text-slate-900'
+                      }`}
+                    >
+                      {tab.label}
+                    </button>
+                  ))}
+                </div>
               </div>
-              <div className="space-y-1">
-                <h2 className="text-base font-semibold text-slate-900">
-                  No receipts uploaded yet
-                </h2>
-                <p className="text-sm text-slate-500">
-                  Drag and drop your PDF receipts above, or click below to generate and extract sample multi-format PDFs (AWS, Whole Foods, Figma, Apple Store, or Scanned OCR).
+
+              {/* Right Table Actions */}
+              <div className="flex items-center gap-2 flex-wrap">
+                {selectedIds.size > 0 && (
+                  <button
+                    type="button"
+                    onClick={handleDeleteSelected}
+                    className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-xs font-medium bg-rose-50 text-rose-700 hover:bg-rose-100 border border-rose-200 transition cursor-pointer"
+                  >
+                    <Trash2 className="w-3.5 h-3.5" />
+                    <span>Delete Selected ({selectedIds.size})</span>
+                  </button>
+                )}
+
+                <button
+                  type="button"
+                  onClick={handleAddManualRow}
+                  className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-xs font-medium bg-slate-100 text-slate-700 hover:bg-slate-200 transition cursor-pointer"
+                >
+                  <Plus className="w-3.5 h-3.5" />
+                  <span>Add Manual Row</span>
+                </button>
+              </div>
+            </div>
+
+            {/* Empty State */}
+            {records.length === 0 ? (
+              <div className="p-12 text-center max-w-lg mx-auto space-y-4">
+                <div className="w-14 h-14 rounded-2xl bg-slate-100 text-slate-500 flex items-center justify-center mx-auto">
+                  <Receipt className="w-7 h-7" />
+                </div>
+                <div className="space-y-1">
+                  <h2 className="text-base font-semibold text-slate-900">
+                    No receipts uploaded yet
+                  </h2>
+                  <p className="text-sm text-slate-500">
+                    Drag and drop your PDF receipts or Excel raw data above, or click below to load 6 sample PDFs with repeating customers across multiple dates.
+                  </p>
+                </div>
+                <div className="flex items-center justify-center gap-3 pt-2 flex-wrap">
+                  <button
+                    type="button"
+                    onClick={() => handleLoadSamples(false)}
+                    className="inline-flex items-center gap-2 px-4 py-2.5 rounded-xl text-sm font-semibold bg-indigo-600 text-white hover:bg-indigo-700 shadow-xs transition cursor-pointer"
+                  >
+                    <Sparkles className="w-4 h-4" />
+                    <span>Load 6 Sample PDFs (with Repeat Customers)</span>
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => handleLoadSamples(true)}
+                    className="inline-flex items-center gap-2 px-4 py-2.5 rounded-xl text-sm font-semibold bg-white text-slate-700 hover:bg-slate-50 border border-slate-200 transition cursor-pointer"
+                  >
+                    <ScanLine className="w-4 h-4 text-amber-600" />
+                    <span>Try Scanned OCR Receipt</span>
+                  </button>
+                </div>
+              </div>
+            ) : filteredRecords.length === 0 ? (
+              <div className="p-10 text-center text-slate-500 space-y-2">
+                <Filter className="w-6 h-6 mx-auto text-slate-400" />
+                <p className="text-sm font-medium">
+                  No receipts match your current filter or search query.
                 </p>
-              </div>
-              <div className="flex items-center justify-center gap-3 pt-2 flex-wrap">
                 <button
                   type="button"
-                  onClick={() => handleLoadSamples(false)}
-                  className="inline-flex items-center gap-2 px-4 py-2.5 rounded-xl text-sm font-semibold bg-indigo-600 text-white hover:bg-indigo-700 shadow-xs transition cursor-pointer"
+                  onClick={() => {
+                    setSearchQuery('');
+                    setStatusFilter('all');
+                  }}
+                  className="text-xs font-semibold text-indigo-600 hover:underline"
                 >
-                  <Sparkles className="w-4 h-4" />
-                  <span>Load 4 Sample PDF Receipts</span>
-                </button>
-                <button
-                  type="button"
-                  onClick={() => handleLoadSamples(true)}
-                  className="inline-flex items-center gap-2 px-4 py-2.5 rounded-xl text-sm font-semibold bg-white text-slate-700 hover:bg-slate-50 border border-slate-200 transition cursor-pointer"
-                >
-                  <ScanLine className="w-4 h-4 text-amber-600" />
-                  <span>Try Scanned OCR Receipt</span>
+                  Reset filters
                 </button>
               </div>
-            </div>
-          ) : filteredRecords.length === 0 ? (
-            <div className="p-10 text-center text-slate-500 space-y-2">
-              <Filter className="w-6 h-6 mx-auto text-slate-400" />
-              <p className="text-sm font-medium">No receipts match your current filter or search query.</p>
-              <button
-                type="button"
-                onClick={() => {
-                  setSearchQuery('');
-                  setStatusFilter('all');
-                }}
-                className="text-xs font-semibold text-indigo-600 hover:underline"
-              >
-                Reset filters
-              </button>
-            </div>
-          ) : (
-            <>
-              {/* Inline Edit Hint Bar */}
-              <div className="bg-slate-50/80 px-4 sm:px-6 py-2 border-b border-slate-200 flex items-center justify-between text-xs text-slate-500">
-                <span className="flex items-center gap-1.5">
-                  <Edit3 className="w-3.5 h-3.5 text-indigo-600" />
-                  <span>
-                    <strong>Tip:</strong> Click any Merchant/Customer Name, Date, or Total Amount cell below to edit inline before exporting.
+            ) : (
+              <>
+                {/* Inline Edit Hint Bar */}
+                <div className="bg-slate-50/80 px-4 sm:px-6 py-2 border-b border-slate-200 flex items-center justify-between text-xs text-slate-500">
+                  <span className="flex items-center gap-1.5">
+                    <Edit3 className="w-3.5 h-3.5 text-indigo-600" />
+                    <span>
+                      <strong>Tip:</strong> Click any Customer/Merchant Name, Date, or Total Amount cell below to edit inline.
+                    </span>
                   </span>
-                </span>
-                <span>
-                  Showing <strong>{filteredRecords.length}</strong> of <strong>{records.length}</strong> receipt(s)
-                </span>
-              </div>
+                  <span>
+                    Showing <strong>{filteredRecords.length}</strong> of{' '}
+                    <strong>{records.length}</strong> receipt(s)
+                  </span>
+                </div>
 
-              {/* Desktop / Tablet Data Table */}
-              <div className="overflow-x-auto">
-                <table className="w-full text-left border-collapse">
-                  <thead>
-                    <tr className="border-b border-slate-200 bg-slate-50/50 text-[11px] font-semibold uppercase tracking-wider text-slate-500">
-                      <th className="py-3 pl-4 sm:pl-6 pr-2 w-10">
-                        <input
-                          type="checkbox"
-                          checked={
-                            filteredRecords.length > 0 &&
-                            filteredRecords.every((r) => selectedIds.has(r.id))
-                          }
-                          onChange={toggleSelectAll}
-                          aria-label="Select all receipts"
-                          className="w-4 h-4 rounded border-slate-300 text-indigo-600 focus:ring-indigo-500 cursor-pointer"
-                        />
-                      </th>
-                      <th className="py-3 px-3">Source File</th>
-                      <th className="py-3 px-3 min-w-[230px]">Customer / Merchant Name</th>
-                      <th className="py-3 px-3 min-w-[155px]">Date</th>
-                      <th className="py-3 px-3 min-w-[175px]">Total Amount</th>
-                      <th className="py-3 px-3">Parser / Status</th>
-                      <th className="py-3 pl-3 pr-4 sm:pr-6 text-right">Actions</th>
-                    </tr>
-                  </thead>
-                  <tbody className="divide-y divide-slate-200 text-sm">
-                    {filteredRecords.map((rec) => {
-                      const isSelected = selectedIds.has(rec.id);
-                      const isEditingMerchant =
-                        editingCell?.id === rec.id && editingCell?.field === 'merchant_name';
-                      const isEditingDate =
-                        editingCell?.id === rec.id && editingCell?.field === 'date';
-                      const isEditingAmount =
-                        editingCell?.id === rec.id && editingCell?.field === 'total_amount';
+                {/* Desktop / Tablet Data Table */}
+                <div className="overflow-x-auto">
+                  <table className="w-full text-left border-collapse">
+                    <thead>
+                      <tr className="border-b border-slate-200 bg-slate-50/50 text-[11px] font-semibold uppercase tracking-wider text-slate-500">
+                        <th className="py-3 pl-4 sm:pl-6 pr-2 w-10">
+                          <input
+                            type="checkbox"
+                            checked={
+                              filteredRecords.length > 0 &&
+                              filteredRecords.every((r) => selectedIds.has(r.id))
+                            }
+                            onChange={toggleSelectAll}
+                            aria-label="Select all receipts"
+                            className="w-4 h-4 rounded border-slate-300 text-indigo-600 focus:ring-indigo-500 cursor-pointer"
+                          />
+                        </th>
+                        <th className="py-3 px-3">Source File</th>
+                        <th className="py-3 px-3 min-w-[230px]">Customer / Merchant Name</th>
+                        <th className="py-3 px-3 min-w-[155px]">Date</th>
+                        <th className="py-3 px-3 min-w-[175px]">Total Amount</th>
+                        <th className="py-3 px-3">Parser / Status</th>
+                        <th className="py-3 pl-3 pr-4 sm:pr-6 text-right">Actions</th>
+                      </tr>
+                    </thead>
+                    <tbody className="divide-y divide-slate-200 text-sm">
+                      {filteredRecords.map((rec) => {
+                        const isSelected = selectedIds.has(rec.id);
+                        const isEditingMerchant =
+                          editingCell?.id === rec.id && editingCell?.field === 'merchant_name';
+                        const isEditingDate =
+                          editingCell?.id === rec.id && editingCell?.field === 'date';
+                        const isEditingAmount =
+                          editingCell?.id === rec.id && editingCell?.field === 'total_amount';
 
-                      return (
-                        <tr
-                          key={rec.id}
-                          className={`group transition-colors ${
-                            isSelected ? 'bg-indigo-50/40' : 'hover:bg-slate-50/80'
-                          }`}
-                        >
-                          {/* Checkbox */}
-                          <td className="py-3.5 pl-4 sm:pl-6 pr-2 align-middle">
-                            <input
-                              type="checkbox"
-                              checked={isSelected}
-                              onChange={() => toggleSelectRow(rec.id)}
-                              aria-label={`Select ${rec.filename}`}
-                              className="w-4 h-4 rounded border-slate-300 text-indigo-600 focus:ring-indigo-500 cursor-pointer"
-                            />
-                          </td>
+                        // Check if this customer is a repeat customer
+                        const normKey = (rec.merchant_name || '')
+                          .trim()
+                          .toLowerCase()
+                          .replace(/\s+/g, ' ');
+                        const custInfo = analytics.customers.find((c) => c.key === normKey);
+                        const isRepeatCustomer = custInfo?.isRepeat;
 
-                          {/* File Name & Invoice # */}
-                          <td className="py-3.5 px-3 align-middle max-w-[190px]">
-                            <div className="flex items-start gap-2">
-                              <FileText className="w-4 h-4 text-slate-400 shrink-0 mt-0.5" />
-                              <div className="truncate">
-                                <p
-                                  className="font-medium text-slate-800 truncate text-xs sm:text-sm"
-                                  title={rec.filename}
-                                >
-                                  {rec.filename}
-                                </p>
-                                {rec.invoice_number && (
-                                  <p className="text-[11px] text-slate-400 font-mono">
-                                    #{rec.invoice_number}
+                        return (
+                          <tr
+                            key={rec.id}
+                            className={`group transition-colors ${
+                              isSelected ? 'bg-indigo-50/40' : 'hover:bg-slate-50/80'
+                            }`}
+                          >
+                            {/* Checkbox */}
+                            <td className="py-3.5 pl-4 sm:pl-6 pr-2 align-middle">
+                              <input
+                                type="checkbox"
+                                checked={isSelected}
+                                onChange={() => toggleSelectRow(rec.id)}
+                                aria-label={`Select ${rec.filename}`}
+                                className="w-4 h-4 rounded border-slate-300 text-indigo-600 focus:ring-indigo-500 cursor-pointer"
+                              />
+                            </td>
+
+                            {/* File Name & Invoice # */}
+                            <td className="py-3.5 px-3 align-middle max-w-[190px]">
+                              <div className="flex items-start gap-2">
+                                <FileText className="w-4 h-4 text-slate-400 shrink-0 mt-0.5" />
+                                <div className="truncate">
+                                  <p
+                                    className="font-medium text-slate-800 truncate text-xs sm:text-sm"
+                                    title={rec.filename}
+                                  >
+                                    {rec.filename}
                                   </p>
-                                )}
+                                  {rec.invoice_number && (
+                                    <p className="text-[11px] text-slate-400 font-mono">
+                                      #{rec.invoice_number}
+                                    </p>
+                                  )}
+                                </div>
                               </div>
-                            </div>
-                          </td>
+                            </td>
 
-                          {/* Editable Customer / Merchant Name */}
-                          <td className="py-3.5 px-3 align-middle">
-                            {isEditingMerchant ? (
-                              <div className="space-y-1.5">
-                                <input
-                                  type="text"
-                                  autoFocus
-                                  value={rec.merchant_name}
-                                  onChange={(e) =>
-                                    handleUpdateRecord(rec.id, 'merchant_name', e.target.value)
-                                  }
-                                  onKeyDown={(e) => {
-                                    if (e.key === 'Enter' || e.key === 'Escape') {
-                                      setEditingCell(null);
-                                    }
-                                  }}
-                                  placeholder="Merchant / Vendor Name"
-                                  className="w-full px-2.5 py-1.5 text-sm font-medium rounded-lg border border-indigo-500 bg-white focus:outline-none focus:ring-2 focus:ring-indigo-500/20"
-                                />
-                                <div className="flex items-center gap-1.5">
+                            {/* Editable Customer / Merchant Name */}
+                            <td className="py-3.5 px-3 align-middle">
+                              {isEditingMerchant ? (
+                                <div className="space-y-1.5">
                                   <input
                                     type="text"
-                                    value={rec.customer_name || ''}
+                                    autoFocus
+                                    value={rec.merchant_name}
                                     onChange={(e) =>
-                                      handleUpdateRecord(rec.id, 'customer_name', e.target.value)
+                                      handleUpdateRecord(rec.id, 'merchant_name', e.target.value)
                                     }
                                     onKeyDown={(e) => {
                                       if (e.key === 'Enter' || e.key === 'Escape') {
                                         setEditingCell(null);
                                       }
                                     }}
-                                    placeholder="Billed To / Customer (optional)"
-                                    className="w-full px-2 py-1 text-xs rounded-md border border-slate-300 bg-slate-50 focus:outline-none focus:border-indigo-500"
+                                    placeholder="Customer / Merchant Name"
+                                    className="w-full px-2.5 py-1.5 text-sm font-medium rounded-lg border border-indigo-500 bg-white focus:outline-none focus:ring-2 focus:ring-indigo-500/20"
+                                  />
+                                  <div className="flex items-center gap-1.5">
+                                    <input
+                                      type="text"
+                                      value={rec.customer_name || ''}
+                                      onChange={(e) =>
+                                        handleUpdateRecord(rec.id, 'customer_name', e.target.value)
+                                      }
+                                      onKeyDown={(e) => {
+                                        if (e.key === 'Enter' || e.key === 'Escape') {
+                                          setEditingCell(null);
+                                        }
+                                      }}
+                                      placeholder="Billed To / Notes (optional)"
+                                      className="w-full px-2 py-1 text-xs rounded-md border border-slate-300 bg-slate-50 focus:outline-none focus:border-indigo-500"
+                                    />
+                                    <button
+                                      type="button"
+                                      onClick={() => setEditingCell(null)}
+                                      className="p-1.5 rounded-lg bg-indigo-600 text-white hover:bg-indigo-700 shrink-0"
+                                      title="Done editing"
+                                    >
+                                      <Check className="w-3.5 h-3.5" />
+                                    </button>
+                                  </div>
+                                </div>
+                              ) : (
+                                <div
+                                  onClick={() =>
+                                    setEditingCell({ id: rec.id, field: 'merchant_name' })
+                                  }
+                                  className="group/cell cursor-pointer rounded-lg px-2.5 py-1.5 -mx-2.5 hover:bg-white hover:ring-1 hover:ring-slate-200 transition flex items-center justify-between gap-2"
+                                >
+                                  <div>
+                                    <div className="flex items-center gap-1.5 flex-wrap">
+                                      <Building2 className="w-3.5 h-3.5 text-slate-400 shrink-0" />
+                                      <span
+                                        className={`font-semibold ${
+                                          !rec.merchant_name ||
+                                          rec.merchant_name === 'Unknown Merchant'
+                                            ? 'text-amber-600 italic'
+                                            : 'text-slate-900'
+                                        }`}
+                                      >
+                                        {rec.merchant_name || 'Click to enter customer'}
+                                      </span>
+                                      {isRepeatCustomer && (
+                                        <span className="inline-flex items-center gap-0.5 px-1.5 py-0.5 rounded-md text-[10px] font-bold bg-indigo-50 text-indigo-700 border border-indigo-200">
+                                          <Repeat className="w-2.5 h-2.5" />
+                                          {custInfo.paymentCount}x Repeat
+                                        </span>
+                                      )}
+                                    </div>
+                                    {rec.customer_name &&
+                                      rec.customer_name !== rec.merchant_name && (
+                                        <p className="text-xs text-slate-500 pl-5">
+                                          Billed To: {rec.customer_name}
+                                        </p>
+                                      )}
+                                  </div>
+                                  <Edit3 className="w-3.5 h-3.5 text-slate-300 opacity-0 group-hover/cell:opacity-100 transition shrink-0" />
+                                </div>
+                              )}
+                            </td>
+
+                            {/* Editable Date */}
+                            <td className="py-3.5 px-3 align-middle">
+                              {isEditingDate ? (
+                                <div className="flex items-center gap-1">
+                                  <input
+                                    type="text"
+                                    autoFocus
+                                    value={rec.date}
+                                    onChange={(e) =>
+                                      handleUpdateRecord(rec.id, 'date', e.target.value)
+                                    }
+                                    onBlur={() => setEditingCell(null)}
+                                    onKeyDown={(e) => {
+                                      if (e.key === 'Enter' || e.key === 'Escape') {
+                                        setEditingCell(null);
+                                      }
+                                    }}
+                                    placeholder="YYYY-MM-DD"
+                                    className="w-32 px-2.5 py-1.5 text-sm font-mono rounded-lg border border-indigo-500 bg-white focus:outline-none focus:ring-2 focus:ring-indigo-500/20"
+                                  />
+                                </div>
+                              ) : (
+                                <div
+                                  onClick={() => setEditingCell({ id: rec.id, field: 'date' })}
+                                  className="group/cell cursor-pointer rounded-lg px-2.5 py-1.5 -mx-2.5 hover:bg-white hover:ring-1 hover:ring-slate-200 transition inline-flex flex-col"
+                                >
+                                  <div className="flex items-center gap-1.5">
+                                    <Calendar className="w-3.5 h-3.5 text-slate-400 shrink-0" />
+                                    {rec.date ? (
+                                      <span className="font-mono text-xs sm:text-sm font-medium text-slate-800">
+                                        {rec.date}
+                                      </span>
+                                    ) : (
+                                      <span className="text-xs text-amber-600 italic font-medium">
+                                        + Set Date
+                                      </span>
+                                    )}
+                                    <Edit3 className="w-3 h-3 text-slate-300 opacity-0 group-hover/cell:opacity-100 transition" />
+                                  </div>
+                                  {rec.raw_date && rec.raw_date !== rec.date && (
+                                    <span className="text-[11px] text-slate-400 pl-5">
+                                      Raw: &ldquo;{rec.raw_date}&rdquo;
+                                    </span>
+                                  )}
+                                </div>
+                              )}
+                            </td>
+
+                            {/* Editable Total Amount & Currency */}
+                            <td className="py-3.5 px-3 align-middle">
+                              {isEditingAmount ? (
+                                <div className="flex items-center gap-1.5">
+                                  <select
+                                    value={rec.currency || 'USD'}
+                                    onChange={(e) =>
+                                      handleUpdateRecord(rec.id, 'currency', e.target.value)
+                                    }
+                                    className="px-2 py-1.5 text-xs font-semibold rounded-lg border border-slate-300 bg-slate-50 focus:outline-none focus:border-indigo-500"
+                                  >
+                                    {Object.keys(CURRENCY_SYMBOLS).map((curr) => (
+                                      <option key={curr} value={curr}>
+                                        {curr}
+                                      </option>
+                                    ))}
+                                  </select>
+                                  <input
+                                    type="number"
+                                    step="0.01"
+                                    autoFocus
+                                    value={rec.total_amount ?? ''}
+                                    onChange={(e) =>
+                                      handleUpdateRecord(rec.id, 'total_amount', e.target.value)
+                                    }
+                                    onKeyDown={(e) => {
+                                      if (e.key === 'Enter' || e.key === 'Escape') {
+                                        setEditingCell(null);
+                                      }
+                                    }}
+                                    placeholder="0.00"
+                                    className="w-28 px-2.5 py-1.5 text-sm font-mono font-semibold rounded-lg border border-indigo-500 bg-white focus:outline-none focus:ring-2 focus:ring-indigo-500/20"
                                   />
                                   <button
                                     type="button"
                                     onClick={() => setEditingCell(null)}
-                                    className="p-1.5 rounded-lg bg-indigo-600 text-white hover:bg-indigo-700 shrink-0"
-                                    title="Done editing"
+                                    className="p-1.5 rounded-lg bg-indigo-600 text-white hover:bg-indigo-700"
                                   >
                                     <Check className="w-3.5 h-3.5" />
                                   </button>
                                 </div>
-                              </div>
-                            ) : (
-                              <div
-                                onClick={() =>
-                                  setEditingCell({ id: rec.id, field: 'merchant_name' })
-                                }
-                                className="group/cell cursor-pointer rounded-lg px-2.5 py-1.5 -mx-2.5 hover:bg-white hover:ring-1 hover:ring-slate-200 transition flex items-center justify-between gap-2"
-                              >
-                                <div>
-                                  <div className="flex items-center gap-1.5">
-                                    <Building2 className="w-3.5 h-3.5 text-slate-400 shrink-0" />
-                                    <span
-                                      className={`font-semibold ${
-                                        !rec.merchant_name ||
-                                        rec.merchant_name === 'Unknown Merchant'
-                                          ? 'text-amber-600 italic'
-                                          : 'text-slate-900'
-                                      }`}
-                                    >
-                                      {rec.merchant_name || 'Click to enter merchant'}
-                                    </span>
-                                  </div>
-                                  {rec.customer_name && (
-                                    <p className="text-xs text-slate-500 pl-5">
-                                      Customer: {rec.customer_name}
-                                    </p>
-                                  )}
-                                </div>
-                                <Edit3 className="w-3.5 h-3.5 text-slate-300 opacity-0 group-hover/cell:opacity-100 transition shrink-0" />
-                              </div>
-                            )}
-                          </td>
-
-                          {/* Editable Date */}
-                          <td className="py-3.5 px-3 align-middle">
-                            {isEditingDate ? (
-                              <div className="flex items-center gap-1">
-                                <input
-                                  type="text"
-                                  autoFocus
-                                  value={rec.date}
-                                  onChange={(e) =>
-                                    handleUpdateRecord(rec.id, 'date', e.target.value)
+                              ) : (
+                                <div
+                                  onClick={() =>
+                                    setEditingCell({ id: rec.id, field: 'total_amount' })
                                   }
-                                  onBlur={() => setEditingCell(null)}
-                                  onKeyDown={(e) => {
-                                    if (e.key === 'Enter' || e.key === 'Escape') {
-                                      setEditingCell(null);
-                                    }
-                                  }}
-                                  placeholder="YYYY-MM-DD"
-                                  className="w-32 px-2.5 py-1.5 text-sm font-mono rounded-lg border border-indigo-500 bg-white focus:outline-none focus:ring-2 focus:ring-indigo-500/20"
-                                />
-                              </div>
-                            ) : (
-                              <div
-                                onClick={() => setEditingCell({ id: rec.id, field: 'date' })}
-                                className="group/cell cursor-pointer rounded-lg px-2.5 py-1.5 -mx-2.5 hover:bg-white hover:ring-1 hover:ring-slate-200 transition inline-flex flex-col"
-                              >
-                                <div className="flex items-center gap-1.5">
-                                  <Calendar className="w-3.5 h-3.5 text-slate-400 shrink-0" />
-                                  {rec.date ? (
-                                    <span className="font-mono text-xs sm:text-sm font-medium text-slate-800">
-                                      {rec.date}
+                                  className="group/cell cursor-pointer rounded-lg px-2.5 py-1.5 -mx-2.5 hover:bg-white hover:ring-1 hover:ring-slate-200 transition inline-flex items-center gap-1.5"
+                                >
+                                  {rec.total_amount !== null &&
+                                  rec.total_amount !== '' &&
+                                  !Number.isNaN(Number(rec.total_amount)) ? (
+                                    <span className="font-mono font-bold text-slate-900 text-sm">
+                                      {CURRENCY_SYMBOLS[rec.currency] || '$'}
+                                      {Number(rec.total_amount).toLocaleString('en-US', {
+                                        minimumFractionDigits: 2,
+                                        maximumFractionDigits: 2,
+                                      })}
+                                      <span className="ml-1.5 text-[11px] font-normal text-slate-400">
+                                        {rec.currency || 'USD'}
+                                      </span>
                                     </span>
                                   ) : (
                                     <span className="text-xs text-amber-600 italic font-medium">
-                                      + Set Date
+                                      + Enter Amount
                                     </span>
                                   )}
                                   <Edit3 className="w-3 h-3 text-slate-300 opacity-0 group-hover/cell:opacity-100 transition" />
                                 </div>
-                                {rec.raw_date && rec.raw_date !== rec.date && (
-                                  <span className="text-[11px] text-slate-400 pl-5">
-                                    Raw: &ldquo;{rec.raw_date}&rdquo;
-                                  </span>
-                                )}
-                              </div>
-                            )}
-                          </td>
+                              )}
+                            </td>
 
-                          {/* Editable Total Amount & Currency */}
-                          <td className="py-3.5 px-3 align-middle">
-                            {isEditingAmount ? (
-                              <div className="flex items-center gap-1.5">
-                                <select
-                                  value={rec.currency || 'USD'}
-                                  onChange={(e) =>
-                                    handleUpdateRecord(rec.id, 'currency', e.target.value)
-                                  }
-                                  className="px-2 py-1.5 text-xs font-semibold rounded-lg border border-slate-300 bg-slate-50 focus:outline-none focus:border-indigo-500"
-                                >
-                                  {Object.keys(CURRENCY_SYMBOLS).map((curr) => (
-                                    <option key={curr} value={curr}>
-                                      {curr}
-                                    </option>
-                                  ))}
-                                </select>
-                                <input
-                                  type="number"
-                                  step="0.01"
-                                  autoFocus
-                                  value={rec.total_amount ?? ''}
-                                  onChange={(e) =>
-                                    handleUpdateRecord(rec.id, 'total_amount', e.target.value)
-                                  }
-                                  onKeyDown={(e) => {
-                                    if (e.key === 'Enter' || e.key === 'Escape') {
-                                      setEditingCell(null);
-                                    }
-                                  }}
-                                  placeholder="0.00"
-                                  className="w-28 px-2.5 py-1.5 text-sm font-mono font-semibold rounded-lg border border-indigo-500 bg-white focus:outline-none focus:ring-2 focus:ring-indigo-500/20"
-                                />
-                                <button
-                                  type="button"
-                                  onClick={() => setEditingCell(null)}
-                                  className="p-1.5 rounded-lg bg-indigo-600 text-white hover:bg-indigo-700"
-                                >
-                                  <Check className="w-3.5 h-3.5" />
-                                </button>
-                              </div>
-                            ) : (
-                              <div
-                                onClick={() =>
-                                  setEditingCell({ id: rec.id, field: 'total_amount' })
-                                }
-                                className="group/cell cursor-pointer rounded-lg px-2.5 py-1.5 -mx-2.5 hover:bg-white hover:ring-1 hover:ring-slate-200 transition inline-flex items-center gap-1.5"
-                              >
-                                {rec.total_amount !== null &&
-                                rec.total_amount !== '' &&
-                                !Number.isNaN(Number(rec.total_amount)) ? (
-                                  <span className="font-mono font-bold text-slate-900 text-sm">
-                                    {CURRENCY_SYMBOLS[rec.currency] || '$'}
-                                    {Number(rec.total_amount).toLocaleString('en-US', {
-                                      minimumFractionDigits: 2,
-                                      maximumFractionDigits: 2,
-                                    })}
-                                    <span className="ml-1.5 text-[11px] font-normal text-slate-400">
-                                      {rec.currency || 'USD'}
-                                    </span>
+                            {/* Extraction Method & Status */}
+                            <td className="py-3.5 px-3 align-middle">
+                              <div className="flex flex-col items-start gap-1">
+                                {rec.status === 'success' ? (
+                                  <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs font-medium bg-emerald-50 text-emerald-700 border border-emerald-200">
+                                    <CheckCircle2 className="w-3 h-3" />
+                                    Verified
+                                  </span>
+                                ) : rec.status === 'partial' ? (
+                                  <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs font-medium bg-amber-50 text-amber-700 border border-amber-200">
+                                    <AlertTriangle className="w-3 h-3" />
+                                    Needs Review
                                   </span>
                                 ) : (
-                                  <span className="text-xs text-amber-600 italic font-medium">
-                                    + Enter Amount
+                                  <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs font-medium bg-rose-50 text-rose-700 border border-rose-200">
+                                    <XCircle className="w-3 h-3" />
+                                    Failed
                                   </span>
                                 )}
-                                <Edit3 className="w-3 h-3 text-slate-300 opacity-0 group-hover/cell:opacity-100 transition" />
-                              </div>
-                            )}
-                          </td>
-
-                          {/* Extraction Method & Status */}
-                          <td className="py-3.5 px-3 align-middle">
-                            <div className="flex flex-col items-start gap-1">
-                              {rec.status === 'success' ? (
-                                <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs font-medium bg-emerald-50 text-emerald-700 border border-emerald-200">
-                                  <CheckCircle2 className="w-3 h-3" />
-                                  Verified
+                                <span className="text-[11px] text-slate-400">
+                                  {rec.extraction_method || 'Native PDF'}
                                 </span>
-                              ) : rec.status === 'partial' ? (
-                                <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs font-medium bg-amber-50 text-amber-700 border border-amber-200">
-                                  <AlertTriangle className="w-3 h-3" />
-                                  Needs Review
+                              </div>
+                            </td>
+
+                            {/* Row Actions */}
+                            <td className="py-3.5 pl-3 pr-4 sm:pr-6 align-middle text-right">
+                              <div className="inline-flex items-center gap-1">
+                                <button
+                                  type="button"
+                                  onClick={() => setInspectRecord(rec)}
+                                  className="inline-flex items-center gap-1 px-2.5 py-1.5 rounded-lg text-xs font-medium text-slate-600 hover:text-indigo-600 hover:bg-indigo-50 transition cursor-pointer"
+                                  title="Inspect extracted PDF text & verify fields"
+                                >
+                                  <Eye className="w-3.5 h-3.5" />
+                                  <span className="hidden xl:inline">Inspect</span>
+                                </button>
+                                <button
+                                  type="button"
+                                  onClick={() => handleDeleteRecord(rec.id)}
+                                  className="p-1.5 rounded-lg text-slate-400 hover:text-rose-600 hover:bg-rose-50 transition cursor-pointer"
+                                  title="Delete receipt record"
+                                >
+                                  <Trash2 className="w-4 h-4" />
+                                </button>
+                              </div>
+                            </td>
+                          </tr>
+                        );
+                      })}
+                    </tbody>
+                  </table>
+                </div>
+              </>
+            )}
+          </section>
+        )}
+
+        {/* TAB 2: CUSTOMER & PAYMENT DATE ANALYSIS */}
+        {activeTab === 'analysis' && (
+          <div className="space-y-6">
+            {records.length === 0 ? (
+              <div className="bg-white rounded-2xl border border-slate-200 p-12 text-center max-w-lg mx-auto space-y-4">
+                <div className="w-14 h-14 rounded-2xl bg-emerald-50 text-emerald-600 flex items-center justify-center mx-auto">
+                  <BarChart3 className="w-7 h-7" />
+                </div>
+                <div className="space-y-1">
+                  <h2 className="text-base font-semibold text-slate-900">
+                    No customer payment data to analyze yet
+                  </h2>
+                  <p className="text-sm text-slate-500">
+                    Upload your PDF receipts or Excel raw data, or load our 6 sample receipts to immediately see repeating customers and payment date timelines.
+                  </p>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => handleLoadSamples(false)}
+                  className="inline-flex items-center gap-2 px-4 py-2.5 rounded-xl text-sm font-semibold bg-indigo-600 text-white hover:bg-indigo-700 shadow-xs transition cursor-pointer"
+                >
+                  <Sparkles className="w-4 h-4" />
+                  <span>Load 6 Sample PDFs to Preview Analysis</span>
+                </button>
+              </div>
+            ) : (
+              <>
+                {/* Analytics Insights KPI Row */}
+                <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
+                  {/* Insight 1: Repeat Customers */}
+                  <div className="bg-white rounded-xl border border-slate-200 p-4 shadow-xs">
+                    <div className="flex items-center justify-between">
+                      <span className="text-xs font-semibold uppercase tracking-wider text-slate-500">
+                        Repeating Customers
+                      </span>
+                      <span className="p-2 rounded-lg bg-indigo-50 text-indigo-600">
+                        <Repeat className="w-4 h-4" />
+                      </span>
+                    </div>
+                    <div className="mt-2 flex items-baseline gap-2">
+                      <span className="text-2xl font-bold text-slate-900">
+                        {analytics.repeatCustomersCount}
+                      </span>
+                      <span className="text-xs font-medium text-indigo-600">
+                        of {analytics.totalCustomers} customers ({analytics.repeatRate}%)
+                      </span>
+                    </div>
+                    <p className="text-xs text-slate-500 mt-1">
+                      {analytics.oneTimeCustomersCount} one-time customer(s)
+                    </p>
+                  </div>
+
+                  {/* Insight 2: Repeat Customer Revenue */}
+                  <div className="bg-white rounded-xl border border-slate-200 p-4 shadow-xs">
+                    <div className="flex items-center justify-between">
+                      <span className="text-xs font-semibold uppercase tracking-wider text-slate-500">
+                        Repeat Customer Revenue
+                      </span>
+                      <span className="p-2 rounded-lg bg-emerald-50 text-emerald-600">
+                        <TrendingUp className="w-4 h-4" />
+                      </span>
+                    </div>
+                    <p className="text-2xl font-bold text-slate-900 mt-2">
+                      $
+                      {analytics.repeatRevenue.toLocaleString('en-US', {
+                        minimumFractionDigits: 2,
+                        maximumFractionDigits: 2,
+                      })}
+                    </p>
+                    <p className="text-xs text-slate-500 mt-1">
+                      {analytics.totalRevenue > 0
+                        ? `${Math.round((analytics.repeatRevenue / analytics.totalRevenue) * 100)}% of total collected revenue`
+                        : '0% of total revenue'}
+                    </p>
+                  </div>
+
+                  {/* Insight 3: Top Paying Customer */}
+                  <div className="bg-white rounded-xl border border-slate-200 p-4 shadow-xs">
+                    <div className="flex items-center justify-between">
+                      <span className="text-xs font-semibold uppercase tracking-wider text-slate-500">
+                        Top Paying Customer
+                      </span>
+                      <span className="p-2 rounded-lg bg-amber-50 text-amber-600">
+                        <Users className="w-4 h-4" />
+                      </span>
+                    </div>
+                    <p
+                      className="text-base font-bold text-slate-900 mt-2 truncate"
+                      title={analytics.topCustomer?.name || 'N/A'}
+                    >
+                      {analytics.topCustomer?.name || 'N/A'}
+                    </p>
+                    <p className="text-xs text-slate-500 mt-1">
+                      {analytics.topCustomer ? (
+                        <>
+                          <strong className="text-slate-800">
+                            ${analytics.topCustomer.totalPaid.toLocaleString('en-US', { minimumFractionDigits: 2 })}
+                          </strong>{' '}
+                          across {analytics.topCustomer.paymentCount} payment(s)
+                        </>
+                      ) : (
+                        'No data'
+                      )}
+                    </p>
+                  </div>
+
+                  {/* Insight 4: Peak Payment Date */}
+                  <div className="bg-white rounded-xl border border-slate-200 p-4 shadow-xs">
+                    <div className="flex items-center justify-between">
+                      <span className="text-xs font-semibold uppercase tracking-wider text-slate-500">
+                        Peak Payment Date
+                      </span>
+                      <span className="p-2 rounded-lg bg-purple-50 text-purple-600">
+                        <Calendar className="w-4 h-4" />
+                      </span>
+                    </div>
+                    <p className="text-xl font-bold font-mono text-slate-900 mt-2">
+                      {analytics.peakDate?.date || 'N/A'}
+                    </p>
+                    <p className="text-xs text-slate-500 mt-1">
+                      {analytics.peakDate ? (
+                        <>
+                          <strong className="text-slate-800">
+                            ${analytics.peakDate.totalCollected.toLocaleString('en-US', { minimumFractionDigits: 2 })}
+                          </strong>{' '}
+                          ({analytics.peakDate.receiptCount} payment
+                          {analytics.peakDate.receiptCount === 1 ? '' : 's'})
+                        </>
+                      ) : (
+                        'No dates recorded'
+                      )}
+                    </p>
+                  </div>
+                </div>
+
+                {/* Section A: Repeating Customer & Loyalty Monitor */}
+                <section className="bg-white rounded-2xl border border-slate-200 shadow-xs overflow-hidden">
+                  <div className="p-4 sm:px-6 border-b border-slate-200 flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+                    <div>
+                      <h3 className="text-base font-bold text-slate-900 flex items-center gap-2">
+                        <Repeat className="w-4 h-4 text-indigo-600" />
+                        <span>Customer Repeat &amp; Loyalty Analysis</span>
+                      </h3>
+                      <p className="text-xs text-slate-500 mt-0.5">
+                        Identify repeating customers, how many times they paid, and all dates they paid your service
+                      </p>
+                    </div>
+
+                    {/* Customer Filter Pills */}
+                    <div className="flex items-center gap-1 bg-slate-100 p-1 rounded-xl self-start">
+                      {[
+                        { key: 'all', label: `All Customers (${analytics.totalCustomers})` },
+                        {
+                          key: 'repeat',
+                          label: `Repeating (${analytics.repeatCustomersCount})`,
+                        },
+                        {
+                          key: 'onetime',
+                          label: `One-Time (${analytics.oneTimeCustomersCount})`,
+                        },
+                      ].map((f) => (
+                        <button
+                          key={f.key}
+                          type="button"
+                          onClick={() => setCustomerFilter(f.key)}
+                          className={`px-3 py-1 rounded-lg text-xs font-medium transition cursor-pointer ${
+                            customerFilter === f.key
+                              ? 'bg-white text-slate-900 shadow-xs'
+                              : 'text-slate-600 hover:text-slate-900'
+                          }`}
+                        >
+                          {f.label}
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+
+                  <div className="overflow-x-auto">
+                    <table className="w-full text-left border-collapse">
+                      <thead>
+                        <tr className="border-b border-slate-200 bg-slate-50/60 text-[11px] font-semibold uppercase tracking-wider text-slate-500">
+                          <th className="py-3 pl-4 sm:pl-6 pr-3">Customer / Merchant</th>
+                          <th className="py-3 px-3">Customer Status</th>
+                          <th className="py-3 px-3">Payment Dates (When They Paid)</th>
+                          <th className="py-3 px-3">Total Paid</th>
+                          <th className="py-3 px-3">Avg Payment</th>
+                          <th className="py-3 px-3 min-w-[140px]">Revenue Share</th>
+                          <th className="py-3 pl-3 pr-4 sm:pr-6 text-right">Details</th>
+                        </tr>
+                      </thead>
+                      <tbody className="divide-y divide-slate-200 text-sm">
+                        {filteredCustomers.map((cust) => (
+                          <tr key={cust.key} className="hover:bg-slate-50/80 transition-colors">
+                            <td className="py-3.5 pl-4 sm:pl-6 pr-3 font-semibold text-slate-900">
+                              <div className="flex items-center gap-2">
+                                <Building2 className="w-4 h-4 text-slate-400 shrink-0" />
+                                <span>{cust.name}</span>
+                              </div>
+                            </td>
+
+                            <td className="py-3.5 px-3">
+                              {cust.isRepeat ? (
+                                <span className="inline-flex items-center gap-1 px-2.5 py-1 rounded-full text-xs font-bold bg-indigo-50 text-indigo-700 border border-indigo-200">
+                                  <Repeat className="w-3 h-3" />
+                                  Repeat Customer ({cust.paymentCount}x)
                                 </span>
                               ) : (
-                                <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs font-medium bg-rose-50 text-rose-700 border border-rose-200">
-                                  <XCircle className="w-3 h-3" />
-                                  Failed
+                                <span className="inline-flex items-center gap-1 px-2.5 py-1 rounded-full text-xs font-medium bg-slate-100 text-slate-600">
+                                  One-Time (1x)
                                 </span>
                               )}
-                              <span className="text-[11px] text-slate-400">
-                                {rec.extraction_method || 'Native PDF'}
+                            </td>
+
+                            <td className="py-3.5 px-3">
+                              <div className="flex flex-wrap gap-1.5">
+                                {cust.sortedDates.length > 0 ? (
+                                  cust.sortedDates.map((d, idx) => (
+                                    <button
+                                      key={`${cust.key}-d-${idx}`}
+                                      type="button"
+                                      onClick={() => jumpToDateReceipts(d)}
+                                      className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md text-xs font-mono bg-slate-100 hover:bg-indigo-50 hover:text-indigo-700 text-slate-700 border border-slate-200 transition cursor-pointer"
+                                      title={`Filter receipts on ${d}`}
+                                    >
+                                      <Calendar className="w-3 h-3 text-slate-400" />
+                                      {d}
+                                    </button>
+                                  ))
+                                ) : (
+                                  <span className="text-xs text-slate-400 italic">No date</span>
+                                )}
+                              </div>
+                              {cust.sortedDates.length >= 2 && (
+                                <p className="text-[11px] text-slate-400 mt-1">
+                                  First: {cust.firstPaymentDate} • Latest: {cust.lastPaymentDate}
+                                </p>
+                              )}
+                            </td>
+
+                            <td className="py-3.5 px-3 font-mono font-bold text-slate-900">
+                              $
+                              {cust.totalPaid.toLocaleString('en-US', {
+                                minimumFractionDigits: 2,
+                                maximumFractionDigits: 2,
+                              })}
+                            </td>
+
+                            <td className="py-3.5 px-3 font-mono text-slate-600 text-xs sm:text-sm">
+                              $
+                              {cust.avgPayment.toLocaleString('en-US', {
+                                minimumFractionDigits: 2,
+                                maximumFractionDigits: 2,
+                              })}
+                            </td>
+
+                            <td className="py-3.5 px-3">
+                              <div className="flex items-center gap-2">
+                                <div className="flex-1 h-2 bg-slate-100 rounded-full overflow-hidden">
+                                  <div
+                                    className="h-full bg-indigo-600 rounded-full"
+                                    style={{ width: `${Math.min(100, cust.revenueShare)}%` }}
+                                  />
+                                </div>
+                                <span className="text-xs font-mono font-medium text-slate-600 w-11 text-right">
+                                  {cust.revenueShare}%
+                                </span>
+                              </div>
+                            </td>
+
+                            <td className="py-3.5 pl-3 pr-4 sm:pr-6 text-right">
+                              <button
+                                type="button"
+                                onClick={() => jumpToCustomerReceipts(cust.name)}
+                                className="inline-flex items-center gap-1 px-2.5 py-1.5 rounded-lg text-xs font-medium text-indigo-600 hover:bg-indigo-50 transition cursor-pointer"
+                              >
+                                <span>Receipts</span>
+                                <ArrowUpRight className="w-3.5 h-3.5" />
+                              </button>
+                            </td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                </section>
+
+                {/* Section B: Payment Date Monitor (Which Date Customers Paid) */}
+                <section className="bg-white rounded-2xl border border-slate-200 shadow-xs overflow-hidden">
+                  <div className="p-4 sm:px-6 border-b border-slate-200 flex flex-col sm:flex-row sm:items-center justify-between gap-2">
+                    <div>
+                      <h3 className="text-base font-bold text-slate-900 flex items-center gap-2">
+                        <Clock className="w-4 h-4 text-emerald-600" />
+                        <span>Payment Date Monitor (Chronological Timeline)</span>
+                      </h3>
+                      <p className="text-xs text-slate-500 mt-0.5">
+                        Monitor every date a payment was received, which customers paid on that date, and daily totals
+                      </p>
+                    </div>
+                    <span className="text-xs font-medium text-slate-500">
+                      {analytics.timeline.length} Active Payment Date(s)
+                    </span>
+                  </div>
+
+                  <div className="divide-y divide-slate-200">
+                    {analytics.timeline.map((day) => {
+                      const barPercent =
+                        analytics.maxDateAmount > 0
+                          ? Math.max(6, Math.round((day.totalCollected / analytics.maxDateAmount) * 100))
+                          : 0;
+
+                      return (
+                        <div
+                          key={day.date}
+                          className="p-4 sm:px-6 hover:bg-slate-50/70 transition flex flex-col lg:flex-row lg:items-center justify-between gap-4"
+                        >
+                          {/* Date & Payment Count */}
+                          <div className="flex items-start sm:items-center gap-3 min-w-[210px]">
+                            <div className="w-10 h-10 rounded-xl bg-emerald-50 text-emerald-700 border border-emerald-200 flex items-center justify-center shrink-0 font-mono text-xs font-bold">
+                              <Calendar className="w-4 h-4" />
+                            </div>
+                            <div>
+                              <button
+                                type="button"
+                                onClick={() => jumpToDateReceipts(day.date)}
+                                className="font-mono text-sm font-bold text-slate-900 hover:text-indigo-600 transition cursor-pointer"
+                              >
+                                {day.date}
+                              </button>
+                              <p className="text-xs text-slate-500">
+                                {day.receiptCount} payment{day.receiptCount === 1 ? '' : 's'} received
+                              </p>
+                            </div>
+                          </div>
+
+                          {/* Customers Who Paid on This Date */}
+                          <div className="flex-1">
+                            <p className="text-[11px] font-semibold uppercase tracking-wider text-slate-400 mb-1.5">
+                              Customers Who Paid on {day.date}
+                            </p>
+                            <div className="flex flex-wrap gap-2">
+                              {day.customers.map((c, idx) => (
+                                <button
+                                  key={`${day.date}-cust-${idx}`}
+                                  type="button"
+                                  onClick={() => jumpToCustomerReceipts(c.name)}
+                                  className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg text-xs font-medium bg-slate-100 hover:bg-indigo-50 text-slate-800 hover:text-indigo-700 border border-slate-200 transition cursor-pointer"
+                                >
+                                  <span className="font-semibold">{c.name}</span>
+                                  <span className="font-mono text-emerald-700 font-bold">
+                                    ${c.amount.toLocaleString('en-US', { minimumFractionDigits: 2 })}
+                                  </span>
+                                </button>
+                              ))}
+                            </div>
+                          </div>
+
+                          {/* Date Total & Visual Bar */}
+                          <div className="lg:w-64 flex flex-col lg:items-end justify-center shrink-0">
+                            <div className="flex items-baseline justify-between lg:justify-end gap-2 w-full">
+                              <span className="text-xs text-slate-400 lg:hidden">Date Total:</span>
+                              <span className="font-mono text-base font-bold text-slate-900">
+                                $
+                                {day.totalCollected.toLocaleString('en-US', {
+                                  minimumFractionDigits: 2,
+                                  maximumFractionDigits: 2,
+                                })}
                               </span>
                             </div>
-                          </td>
-
-                          {/* Row Actions */}
-                          <td className="py-3.5 pl-3 pr-4 sm:pr-6 align-middle text-right">
-                            <div className="inline-flex items-center gap-1">
-                              <button
-                                type="button"
-                                onClick={() => setInspectRecord(rec)}
-                                className="inline-flex items-center gap-1 px-2.5 py-1.5 rounded-lg text-xs font-medium text-slate-600 hover:text-indigo-600 hover:bg-indigo-50 transition cursor-pointer"
-                                title="Inspect extracted PDF text & verify fields"
-                              >
-                                <Eye className="w-3.5 h-3.5" />
-                                <span className="hidden xl:inline">Inspect</span>
-                              </button>
-                              <button
-                                type="button"
-                                onClick={() => handleDeleteRecord(rec.id)}
-                                className="p-1.5 rounded-lg text-slate-400 hover:text-rose-600 hover:bg-rose-50 transition cursor-pointer"
-                                title="Delete receipt record"
-                              >
-                                <Trash2 className="w-4 h-4" />
-                              </button>
+                            <div className="w-full h-2 bg-slate-100 rounded-full overflow-hidden mt-1.5">
+                              <div
+                                className="h-full bg-emerald-500 rounded-full"
+                                style={{ width: `${barPercent}%` }}
+                              />
                             </div>
-                          </td>
-                        </tr>
+                          </div>
+                        </div>
                       );
                     })}
-                  </tbody>
-                </table>
-              </div>
-            </>
-          )}
-        </section>
+                  </div>
+                </section>
+              </>
+            )}
+          </div>
+        )}
       </main>
 
       {/* Receipt Raw Text & Field Inspector Modal */}
@@ -1106,7 +1641,7 @@ export default function App() {
 
                 <div>
                   <label className="block text-xs font-medium text-slate-700 mb-1">
-                    Merchant / Vendor Name
+                    Customer / Merchant Name
                   </label>
                   <input
                     type="text"
@@ -1214,7 +1749,7 @@ export default function App() {
             {/* Modal Footer */}
             <div className="px-6 py-3.5 bg-slate-50 border-t border-slate-200 flex items-center justify-between">
               <span className="text-xs text-slate-500">
-                Changes are saved automatically to your table.
+                Changes are saved automatically to your table &amp; analytics.
               </span>
               <button
                 type="button"
@@ -1232,7 +1767,7 @@ export default function App() {
       <footer className="border-t border-slate-200 bg-white py-4 px-4 sm:px-6 lg:px-8 text-xs text-slate-500">
         <div className="max-w-7xl mx-auto flex flex-col sm:flex-row items-center justify-between gap-2">
           <span>
-            <strong>Receipt Data Extractor MVP</strong> • Built with React, Tailwind CSS, FastAPI, pdfplumber &amp; Tesseract OCR
+            <strong>Receipt Data Extractor</strong> • Automated PDF/OCR Extraction + Customer Repeat &amp; Payment Date Analytics
           </span>
           <span className="flex items-center gap-1.5">
             <span
@@ -1242,7 +1777,7 @@ export default function App() {
             />
             {backendConnected
               ? 'Connected to FastAPI Backend (Port 8000)'
-              : 'Active Engine: Smart Browser PDF + OCR Parser'}
+              : 'Active Engine: Smart Browser PDF + OCR + Analytics'}
           </span>
         </div>
       </footer>
